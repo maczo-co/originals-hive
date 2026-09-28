@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>maczo Originals — Hive · Provably Fair Verifier</title>
+<style>
+  :root { --bg:#0F212E; --panel:#152C3B; --panel2:#0b1922; --line:#20455c; --fg:#dbe7ef; --mut:#8fa9ba;
+          --acc:#1FFF20; --blue:#1475E1; --bad:#ff5b5b; --warn:#ffcf5b; color-scheme:dark; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 "Bai Jamjuree",system-ui,Segoe UI,Roboto,sans-serif; }
+  a { color:var(--blue); text-decoration:none; } a:hover { text-decoration:underline; }
+  .wrap { max-width:900px; margin:0 auto; padding:26px 18px 90px; }
+  header { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  h1 { font-size:22px; margin:0; } h1 .pill { color:var(--acc); }
+  .sub { color:var(--mut); font-size:13px; }
+  .links { margin-left:auto; font-size:13px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-top:16px; }
+  label { display:block; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--mut); margin:10px 0 4px; }
+  input, textarea { width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:9px 10px; font:14px ui-monospace,SFMono-Regular,Consolas,monospace; }
+  textarea { min-height:52px; resize:vertical; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .btns { display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; }
+  button { cursor:pointer; border:none; border-radius:8px; padding:10px 16px; font-weight:600; font-size:14px; }
+  .primary { background:var(--acc); color:#04240a; } .ghost { background:transparent; border:1px solid var(--line); color:var(--fg); }
+  .result { display:none; } .verdict { display:flex; align-items:center; gap:10px; font-size:17px; font-weight:700; }
+  .dot { width:11px; height:11px; border-radius:50%; display:inline-block; } .ok{background:var(--acc);} .no{background:var(--bad);} .wait{background:var(--warn);}
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:14px 0; }
+  .stat { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .stat .l { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--mut); } .stat .v { font-size:18px; font-weight:700; margin-top:2px; font-family:ui-monospace,Consolas,monospace; }
+  pre { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; font:12.5px ui-monospace,Consolas,monospace; color:#cfe; max-height:340px; }
+  .msg { color:var(--warn); font-size:13px; margin-top:8px; } .err { color:var(--bad); } .note { color:var(--mut); font-size:12.5px; margin-top:10px; }
+  @media (max-width:640px){ .row,.stats{grid-template-columns:1fr;} .links{margin-left:0;width:100%;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>maczo <span class="pill">Originals</span> — Hive</h1>
+    <div class="links"><a href="./docs.html">Docs</a> · <a href="https://github.com/maczo-co/originals-hive">Source</a> · <a href="https://github.com/maczo-co/originals-verify">Engine</a></div>
+  </header>
+  <p class="sub">Reproduce and verify any settled <b>Hive</b> bet — offline, entirely in your browser.
+     This page is <b>self-contained</b> (view source): the uint32 engine, the Hive resolver, and the
+     published odds are all inlined here — nothing is fetched or sent anywhere.</p>
+
+  <div class="card">
+    <div class="row">
+      <div><label for="server">Server seed (revealed)</label><input id="server" placeholder="revealed serverSeed (hex) — omit before reveal"></div>
+      <div><label for="commit">Commitment (SHA-256 of server seed)</label><input id="commit" placeholder="published commitment (hex)"></div>
+    </div>
+    <div class="row">
+      <div><label for="client">Client seed</label><input id="client" placeholder="clientSeed"></div>
+      <div><label for="nonce">Nonce</label><input id="nonce" type="number" min="0" value="1"></div>
+    </div>
+    <label for="params">Bet params (JSON)</label>
+    <textarea id="params">{}</textarea>
+    <div class="btns">
+      <button class="primary" id="verify" type="button">Verify</button>
+      <button class="ghost" id="example" type="button">Load example</button>
+      <button class="ghost" id="deeplink" type="button">Copy deep-link</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="card result" id="result">
+    <div class="verdict"><span class="dot" id="vdot"></span><span id="vtext"></span></div>
+    <div class="stats">
+      <div class="stat"><div class="l">Commitment</div><div class="v" id="s-commit">—</div></div>
+      <div class="stat"><div class="l">Multiplier</div><div class="v" id="s-mult">—</div></div>
+      <div class="stat"><div class="l">Payout (minor)</div><div class="v" id="s-pay">—</div></div>
+    </div>
+    <label>Outcome (reproduced from the seed)</label>
+    <pre id="outcome"></pre>
+    <p class="note">Bias class: <b>modulo</b>. The odds come from
+      <a href="./paytable.json">this game's published paytable</a> (inlined here); the resolver only indexes into it.</p>
+  </div>
+</div>
+
+<script type="module">
+// ================= inlined engine (@maczo/originals-verify) =================
+// @maczo/originals-verify — the shared, frozen provably-fair engine for maczo Originals.
+//
+// This is a faithful, line-for-line port of the authoritative server recipe in
+// libs/provably_fair/fair.py. It is the ONE place the HMAC→uint32 core lives; every per-game
+// verifier repo (github.com/maczo-co/originals-<game>) and the shared verifier site
+// (verify.maczo.co/originals/) import it. NEVER re-implement the crypto in a game repo.
+//
+//     key     = serverSeed (UTF-8 bytes)
+//     message = `${clientSeed}:${nonce}:${cursor}`      (cursor = 0,1,2,… as more bytes are needed)
+//     digest  = HMAC-SHA256(key, message)               (32 bytes)
+//     uints   = digest consumed 4 bytes at a time, big-endian, as uint32 (u ∈ [0, 2^32))
+//
+// Discrete games settle by comparing the integer uints directly (never floats). `fairFloats`
+// (u / 2^32 ∈ [0,1)) is a convenience for outcome *mapping* only.
+//
+// Runtime: uses the Web Crypto API (globalThis.crypto.subtle), which is present in Node >= 15 and
+// every modern browser — so the SAME file runs the Node CLI self-test and the offline in-browser
+// verifier with no branching. HMAC/digest are async there, so the seed-consuming calls are async.
+//
+// SPDX-License-Identifier: MIT
+
+const UINT32 = 4294967296; // 2 ** 32; floats are u / UINT32
+
+// The client_seed charset is restricted so the message delimiter ':' can never be injected.
+const CLIENT_SEED_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const _enc = new TextEncoder();
+
+function _subtle() {
+  const c = globalThis.crypto;
+  if (!c || !c.subtle) {
+    throw new Error(
+      "Web Crypto (crypto.subtle) unavailable — need Node >= 15 or a secure browser context (https:// or file://).",
+    );
+  }
+  return c.subtle;
+}
+
+function validateClientSeed(clientSeed) {
+  if (typeof clientSeed !== "string" || !CLIENT_SEED_RE.test(clientSeed)) {
+    throw new Error("client_seed must match ^[A-Za-z0-9_-]{1,64}$");
+  }
+}
+
+async function _hmacSha256(keyBytes, msgBytes) {
+  const key = await _subtle().importKey(
+    "raw",
+    keyBytes,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return new Uint8Array(await _subtle().sign("HMAC", key, msgBytes)); // 32 bytes
+}
+
+// Return `count` uint32 words from the frozen HMAC stream. Each cursor yields 8 uints (32 bytes / 4);
+// the cursor advances (and the HMAC re-runs) until `count` is satisfied. Mirrors fair.uint_stream.
+async function uintStream(serverSeed, clientSeed, nonce, count) {
+  if (!Number.isInteger(count) || count < 0) throw new Error("count must be an int >= 0");
+  if (!Number.isInteger(nonce) || nonce < 0) throw new Error("nonce must be an int >= 0");
+  validateClientSeed(clientSeed);
+
+  const keyBytes = _enc.encode(String(serverSeed));
+  const out = [];
+  let cursor = 0;
+  while (out.length < count) {
+    const digest = await _hmacSha256(keyBytes, _enc.encode(`${clientSeed}:${nonce}:${cursor}`));
+    for (let i = 0; i < 32; i += 4) {
+      // big-endian uint32; >>> 0 coerces the signed bit-or back to unsigned
+      const u = ((digest[i] << 24) | (digest[i + 1] << 16) | (digest[i + 2] << 8) | digest[i + 3]) >>> 0;
+      out.push(u);
+      if (out.length >= count) break;
+    }
+    cursor += 1;
+  }
+  return out;
+}
+
+// Convenience: the uint stream mapped to floats in [0,1). Mapping only — never settle on these.
+async function fairFloats(serverSeed, clientSeed, nonce, count) {
+  return (await uintStream(serverSeed, clientSeed, nonce, count)).map((u) => u / UINT32);
+}
+
+// Deterministic Fisher-Yates shuffle of range(n) driven by an ALREADY-DERIVED uint array (pure, sync).
+// Requires >= n-1 uints. Each step picks j in [i, n) via modulo over the remaining range. Mirrors
+// fair.shuffle — the modulo bias over a 2^32 range against a tiny remaining range is negligible.
+function shuffle(n, uints) {
+  if (uints.length < Math.max(0, n - 1)) {
+    throw new Error(`need >= ${n - 1} uints to shuffle ${n} items, got ${uints.length}`);
+  }
+  const arr = Array.from({ length: n }, (_, i) => i);
+  for (let i = 0; i < n - 1; i++) {
+    const remaining = n - i;
+    const j = i + (uints[i] % remaining);
+    const t = arr[i];
+    arr[i] = arr[j];
+    arr[j] = t;
+  }
+  return arr;
+}
+
+// Choose `mines` distinct positions from range(grid), sorted ascending. Mirrors fair.derive_bomb_set.
+async function deriveBombSet(grid, mines, serverSeed, clientSeed, nonce) {
+  if (!(mines > 0 && mines < grid)) throw new Error("require 0 < mines < grid");
+  const uints = await uintStream(serverSeed, clientSeed, nonce, grid - 1);
+  const order = shuffle(grid, uints);
+  return order.slice(0, mines).sort((a, b) => a - b);
+}
+
+// The public pre-commitment: SHA-256 hex (lowercase) of the server seed. Mirrors fair.commit.
+async function commit(serverSeed) {
+  const d = new Uint8Array(await _subtle().digest("SHA-256", _enc.encode(String(serverSeed))));
+  return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Verify a revealed server seed against its earlier commitment. Mirrors fair.verify_commit.
+async function verifyCommit(serverSeed, commitmentHex) {
+  return (await commit(serverSeed)) === String(commitmentHex).toLowerCase();
+}
+
+// ---- money mapping (integer minor units) ------------------------------------------------------------
+const E8 = 100000000n; // multipliers/RTP are integers scaled by 1e8
+
+// The floor payout, in integer minor units: floor(bet * multiplier_e8 / 1e8). BigInt so a huge
+// intermediate never loses precision. Mirrors money.payout_minor (flooring only ever lowers RTP).
+function payoutMinor(betMinor, multiplierE8) {
+  const b = BigInt(betMinor);
+  const m = BigInt(multiplierE8);
+  if (b < 0n) throw new Error("betMinor must be >= 0");
+  if (m < 0n) throw new Error("multiplierE8 must be >= 0");
+  return Number((b * m) / E8);
+}
+// ================= inlined Hive resolver (./resolve.js) =================
+// originals-hive — pure resolver. Mirrors libs/game_math/hive.py.
+//
+// Nine uint32 words hatch a 3×3 comb: cell i takes colour `u_i mod C`, where C (2..5) is the colour
+// count of the chosen difficulty. A flood fill over the board's 12 published undirected edges finds the
+// largest orthogonally-connected same-colour swarm; its SIZE (1..9) indexes that difficulty's payout
+// ladder. The ladder is an exact-rational rescale of a frozen shape against the exact largest-cluster
+// size distribution — computed once in Python and BAKED into paytable.json, so this file only indexes
+// it and applies the single integer payout floor.
+//
+// SPDX-License-Identifier: MIT
+
+const game = "hive";
+const biasClass = "modulo";
+
+function uintsNeeded() {
+  return 9; // CELLS — one word per cell
+}
+
+// 4-neighbour adjacency from the published edge list, mirroring hive.ADJ: for cell i, first the far
+// ends of the edges that START at i (in edge order), then the far ends of those that END at i.
+function adjacency(cells, edges) {
+  return Array.from({ length: cells }, (_, i) =>
+    edges.filter((e) => e[0] === i).map((e) => e[1]).concat(edges.filter((e) => e[1] === i).map((e) => e[0])),
+  );
+}
+
+// (size, cells-ascending) of the largest same-colour connected component. Mirrors
+// hive.largest_cluster: ONE `seen` array shared across components, roots scanned 0..8, and a STRICT
+// `>` so a tie keeps the component found FIRST (the one with the lowest-indexed root) — that
+// tie-break is player-visible in `cluster`, so it has to match exactly.
+function largestCluster(colours, adj) {
+  const seen = new Array(colours.length).fill(false);
+  let bestSize = 0;
+  let bestCells = [];
+  for (let i = 0; i < colours.length; i++) {
+    if (seen[i]) continue;
+    const col = colours[i];
+    const stack = [i];
+    const comp = [];
+    seen[i] = true;
+    while (stack.length) {
+      const n = stack.pop();
+      comp.push(n);
+      for (const m of adj[n]) {
+        if (!seen[m] && colours[m] === col) {
+          seen[m] = true;
+          stack.push(m);
+        }
+      }
+    }
+    if (comp.length > bestSize) {
+      bestSize = comp.length;
+      bestCells = comp;
+    }
+  }
+  return [bestSize, bestCells.slice().sort((a, b) => a - b)];
+}
+
+function resolve(uints, params, paytable, opts = {}) {
+  const rtpE8 = BigInt(opts.rtpE8 ?? paytable.rtpE8 ?? 99000000);
+  const betMinor = opts.betMinor ?? 100000000;
+  const cells = paytable.cells; // 9
+  const difficulty = params.difficulty;
+  const cfg = paytable.difficulty[difficulty];
+  if (!cfg) {
+    throw new Error(`hive.difficulty must be one of ${Object.keys(paytable.difficulty).join("/")}`);
+  }
+  // `tableE8` is baked at the PUBLISHED rtp: the server floors the exact rational rescale ONCE, at
+  // that rtp, so a baked rung cannot be re-scaled to another rtp without drifting off the server's
+  // number. Refuse instead of paying a table that is not the one the round settled on.
+  if (rtpE8 !== BigInt(paytable.rtpE8 ?? 99000000)) {
+    throw new Error("hive: tableE8 is baked at paytable.rtpE8 — cannot resolve at another rtp");
+  }
+
+  const C = cfg.C;
+  const colours = [];
+  for (let i = 0; i < cells; i++) colours.push(uints[i] % C);
+  const [size, cluster] = largestCluster(colours, adjacency(cells, paytable.edges));
+
+  const multiplierE8 = cfg.tableE8[size - 1]; // ladder index = size − 1 (size 1..9)
+  const win = multiplierE8 > 0; // the small-size rungs are baked 0 = a real loss
+  const payout = payoutMinor(betMinor, multiplierE8); // BigInt floor; 0 on a losing rung
+
+  return {
+    multiplierE8,
+    win,
+    payoutMinor: payout,
+    outcome: { difficulty, C, colours, size, cluster, multiplier_e8: multiplierE8 },
+  };
+}
+// ================= published odds + a known-answer example =================
+const PAYTABLE = {"game": "hive", "displayName": "Hive", "rtpPercent": 99.0, "rtpE8": 99000000, "engine": "uint32", "biasClass": "modulo", "params": [{"name": "difficulty", "desc": "colour count C: easy=2 / medium=3 / hard=4 / insane=5"}], "cells": 9, "edges": [[0, 1], [1, 2], [0, 3], [1, 4], [2, 5], [3, 4], [4, 5], [3, 6], [4, 7], [5, 8], [6, 7], [7, 8]], "difficulty": {"easy": {"C": 2, "tableE8": [0, 0, 17946890, 44867225, 62814115, 101699044, 191433494, 538406703, 1555397143], "sizeCounts": [2, 8, 56, 120, 138, 104, 64, 18, 2], "totalGrids": 512, "evE8": 98999999}, "medium": {"C": 3, "tableE8": [0, 5368534, 30198007, 70462016, 147634701, 335533411, 872386870, 3221120753, 12750269650], "sizeCounts": [246, 3180, 6624, 5160, 2832, 1200, 384, 54, 3], "totalGrids": 19683, "evE8": 98999999}, "hard": {"C": 4, "tableE8": [0, 11592842, 48303512, 130419482, 318803180, 821159707, 2511782635, 9660702442, 42507090748], "sizeCounts": [9612, 85728, 95184, 46992, 18036, 5328, 1152, 108, 4], "totalGrids": 262144, "evE8": 98999999}, "insane": {"C": 5, "tableE8": [0, 17174883, 70989519, 217548527, 595395968, 1602989146, 5037965888, 20037364330, 100759317777], "sizeCounts": [142820, 859400, 631280, 232080, 69120, 15680, 2560, 180, 5], "totalGrids": 1953125, "evE8": 98999999}}, "ladderIndex": "tableE8[size - 1], size = 1..9", "note": "cell_i colour = u_i mod C (C = 2/3/4/5 by difficulty); flood-fill the 3×3 comb over the 12 undirected edges and take the SIZE of the largest same-colour cluster (ties keep the lowest-rooted one); multiplier_e8 = tableE8[size−1], the published ladder — an exact-rational rescale of the frozen base shape against the exact size distribution (sizeCounts over C^9 grids) so EV == rtp before a single floor. Small sizes are baked 0 = loss."};
+const EXAMPLE = {"serverSeed": "12c42210941603325f10d36892d2d785d9569e32616f7e620999127411929e87", "clientSeed": "player_2", "commitment": "1e04faa9ff1036af1f8a18d9cfde9cc3187ddbae0877ec088a8626d84143b5ca", "nonce": 2, "params": {"difficulty": "easy"}};
+const GAME_ID = "hive";
+// ================= UI =================
+const $ = (id) => document.getElementById(id);
+const setMsg = (t, e) => { const m = $("msg"); m.textContent = t || ""; m.className = e ? "msg err" : "msg"; };
+
+function readQuery() {
+  const q = new URLSearchParams(location.search);
+  if (q.has("server")) $("server").value = q.get("server");
+  if (q.has("commit")) $("commit").value = q.get("commit");
+  if (q.has("client")) $("client").value = q.get("client");
+  if (q.has("nonce")) $("nonce").value = q.get("nonce");
+  const p = q.get("params") || q.get("p");
+  if (p) { try { $("params").value = JSON.stringify(JSON.parse(decodeURIComponent(p))); } catch { $("params").value = decodeURIComponent(p); } }
+  return q.has("server") || q.has("commit");
+}
+function loadExample() {
+  $("server").value = EXAMPLE.serverSeed; $("commit").value = EXAMPLE.commitment;
+  $("client").value = EXAMPLE.clientSeed; $("nonce").value = EXAMPLE.nonce;
+  $("params").value = JSON.stringify(EXAMPLE.params || {});
+}
+function deepLink() {
+  const q = new URLSearchParams();
+  q.set("game", GAME_ID);
+  for (const k of ["server", "commit", "client"]) if ($(k).value) q.set(k, $(k).value.trim());
+  q.set("nonce", $("nonce").value || "1");
+  const params = ($("params").value || "").trim();
+  const qs = q.toString() + (params && params !== "{}" ? "&params=" + encodeURIComponent(params) : "");
+  const url = "https://verify.maczo.co/originals/?" + qs;
+  navigator.clipboard?.writeText(url); setMsg("Deep-link copied: " + url);
+}
+async function runVerify() {
+  setMsg("");
+  const server = $("server").value.trim(), commitHex = $("commit").value.trim().toLowerCase();
+  const client = $("client").value.trim(), nonce = parseInt($("nonce").value, 10);
+  let params; try { params = JSON.parse(($("params").value || "{}").trim() || "{}"); }
+  catch (e) { return setMsg("Params is not valid JSON: " + e.message, true); }
+  const result = $("result");
+  if (!server) {
+    result.style.display = "block"; $("vdot").className = "dot wait";
+    $("vtext").textContent = "Awaiting reveal — provide the revealed server seed to reproduce the outcome.";
+    $("s-commit").textContent = commitHex ? "held (pre-reveal)" : "—"; $("s-mult").textContent = "—"; $("s-pay").textContent = "—"; $("outcome").textContent = "";
+    return;
+  }
+  let r; try { const uints = await uintStream(server, client, nonce, uintsNeeded(params)); r = resolve(uints, params, PAYTABLE, {}); }
+  catch (e) { return setMsg("Resolve failed: " + e.message, true); }
+  const c = await commit(server);
+  result.style.display = "block";
+  if (commitHex && c !== commitHex) { $("vdot").className = "dot no"; $("vtext").textContent = "Commitment MISMATCH — this server seed does not match the published commitment."; }
+  else { $("vdot").className = "dot ok"; $("vtext").textContent = "Verified — reproduced from the seed" + (commitHex ? ", commitment matches." : "."); }
+  $("s-commit").textContent = commitHex ? (c === commitHex ? "✓ matches" : "✗ mismatch") : "seed → " + c.slice(0, 12) + "…";
+  $("s-mult").textContent = (r.multiplierE8 / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 }) + "×";
+  $("s-pay").textContent = r.payoutMinor.toLocaleString();
+  $("outcome").textContent = JSON.stringify({ win: r.win, multiplierE8: r.multiplierE8, payoutMinor: r.payoutMinor, outcome: r.outcome }, null, 2);
+}
+$("verify").addEventListener("click", runVerify);
+$("example").addEventListener("click", () => { loadExample(); runVerify(); });
+$("deeplink").addEventListener("click", deepLink);
+if (readQuery()) runVerify(); else { loadExample(); runVerify(); }
+</script>
+</body>
+</html>
